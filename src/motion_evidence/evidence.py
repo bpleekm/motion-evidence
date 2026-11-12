@@ -87,6 +87,8 @@ class EvidenceProvider:
         start, end = self.catalog.index(start_frame_id), self.catalog.index(end_frame_id_exclusive)
         if type(step_frames) is not int or step_frames < 1 or end <= start:
             raise ValueError("invalid sequence")
+        if start < self.task["context"][0] or end > self.task["context"][1]:
+            raise ValueError("sequence outside read-only task context")
         if end - start > step_frames * self.max_images:
             raise ValueError("sequence exceeds image budget; request a shorter range or larger step")
         return self.get_frames([self.catalog.boundary(i) for i in range(start, end, step_frames)], roi)

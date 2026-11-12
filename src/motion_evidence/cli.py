@@ -40,6 +40,7 @@ def main():
         value = load(args.run / "timeline.json")
         result = {"status": value["status"], **value["summary"], "held_tasks": len(value["held_tasks"]),
                   "hold_events": len(rows(args.run / "holds.jsonl")) if (args.run / "holds.jsonl").is_file() else 0}
+        result["upstream_holds"] = len(load(args.run / "manifest.json").get("upstream_holds", []))
     print(json.dumps(result, ensure_ascii=False))
 
 

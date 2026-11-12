@@ -22,7 +22,7 @@ def prepare(detector, out, *, context_ms=1000, max_task_ms=30000, locks_file=Non
     if source.get("schema_version") != "motion-detect/v1":
         raise ValueError("unsupported detector contract")
     frames = rows(detector / "frames.jsonl")
-    catalog = Catalog(frames, source["total_ms"])
+    catalog = Catalog(frames, source)
     observations = rows(detector / "observations.jsonl")
     if not observations:
         return _hold(out, "observations", "selected frame observations")
@@ -30,9 +30,9 @@ def prepare(detector, out, *, context_ms=1000, max_task_ms=30000, locks_file=Non
         raise ValueError("invalid task limits")
     baseline, candidates = [], []
     previous = 0
-    for row in observations:
+    for sequence, row in enumerate(observations, 1):
         current = catalog.index(row["frame_id"])
-        if current < previous or row["time_ms"] != catalog.time(current):
+        if row["seq"] != sequence or (sequence > 1 and current <= previous) or current < previous or row["time_ms"] != catalog.time(current):
             raise ValueError("observation identity/order mismatch")
         activity = "uncertain" if row["warming"] else "active" if row["mog_pass"] or row["motion_pass"] else "static"
         if current > previous:
@@ -81,6 +81,7 @@ def prepare(detector, out, *, context_ms=1000, max_task_ms=30000, locks_file=Non
     hashes = {name: digest(out / name) for name in ("baseline.json", "locks.json", "frames.jsonl", "tasks.jsonl")}
     manifest = {"schema_version": "motion-evidence/v1", "policy_version": POLICY, "status": "ready", "source": source,
                 "artifact_hashes": hashes, "settings": {"context_ms": context_ms, "max_task_ms": max_task_ms},
+                "upstream_holds": [status["person"]] if status.get("person", {}).get("held") else [],
                 "summary": {"tasks": len(tasks), "core_ms": sum(catalog.time(b) - catalog.time(a) for a, b in editable), "total_ms": source["total_ms"]}}
     manifest["fingerprint"] = fingerprint(manifest)
     write(out / "manifest.json", manifest)
