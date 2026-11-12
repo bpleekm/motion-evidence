@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:motion-evidence:review:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["segments"],
+  "properties": {
+    "segments": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["start_frame_id", "end_frame_id_exclusive", "activity", "evidence_frame_ids", "reason"],
+        "properties": {
+          "start_frame_id": {"type": "string"},
+          "end_frame_id_exclusive": {"type": "string"},
+          "activity": {"type": "string", "enum": ["static", "active", "uncertain"]},
+          "evidence_frame_ids": {"type": "array", "minItems": 2, "items": {"type": "string"}},
+          "reason": {"type": "string"}
+        }
+      }
+    }
+  }
+}

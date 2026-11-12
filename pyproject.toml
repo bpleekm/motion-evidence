@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "motion-evidence"
+version = "0.1.0"
+description = "Bounded visual evidence review and deterministic timeline merging"
+requires-python = ">=3.11"
+dependencies = ["av>=16,<17", "Pillow>=11,<13", "openai>=2,<3", "pydantic>=2.10,<3", "python-dotenv>=1,<2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+motion-evidence = "motion_evidence.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/motion_evidence"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
