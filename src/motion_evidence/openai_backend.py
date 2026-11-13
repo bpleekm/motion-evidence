@@ -5,9 +5,17 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
-from .common import POLICY, append, fingerprint, load, open_run, rows, write
+from .artifacts import (
+    append_json_line,
+    json_fingerprint,
+    load_review_run,
+    read_json,
+    read_json_lines,
+    write_json,
+)
 from .evidence import EvidenceProvider, FrameCache
-from .models import ReviewResult, validate_result
+from .policy import POLICY_VERSION
+from .schemas import ReviewResult, validate_review_result
 
 INSTRUCTIONS = """Review only the editable video range under the supplied policy.
 Static sitting, sleeping and static standing permit acceleration. Person presence alone is not activity.
@@ -19,7 +27,7 @@ Output concise observable evidence, not speculative intent or identity. Do not d
 """
 
 
-def tools():
+def build_evidence_tools():
     roi = {"type": ["array", "null"], "items": {"type": "integer"}}
     definitions = [
         (
@@ -55,7 +63,7 @@ def tools():
     ]
 
 
-def settings(env_file):
+def load_openai_settings(env_file):
     values = dotenv_values(env_file, interpolate=False) if Path(env_file).is_file() else {}
 
     def get(name):
@@ -64,20 +72,27 @@ def settings(env_file):
     return {name: get(name) for name in ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL")}
 
 
-def review(
-    out, env_file, max_api_calls, *, max_rounds=6, max_images=24, max_cache_mb=256, client=None
+def review_tasks(
+    output_dir,
+    env_file,
+    max_api_calls,
+    *,
+    max_rounds=6,
+    max_images=24,
+    max_cache_mb=256,
+    client=None,
 ):
-    out = Path(out)
-    if load(out / "manifest.json").get("status") == "hold":
+    output_dir = Path(output_dir)
+    if read_json(output_dir / "manifest.json").get("status") == "hold":
         return {"status": "hold", "missing": ["detector_artifacts"]}
-    manifest, catalog, tasks = open_run(out)
+    manifest, catalog, tasks = load_review_run(output_dir)
     if not tasks:
         return {"status": "complete", "decided": 0, "held_attempts": 0, "api_attempts": 0}
-    config = settings(env_file)
-    missing = [name for name in ("OPENAI_API_KEY", "OPENAI_MODEL") if not config[name]]
+    settings = load_openai_settings(env_file)
+    missing = [name for name in ("OPENAI_API_KEY", "OPENAI_MODEL") if not settings[name]]
     if client is None and missing:
-        append(
-            out / "holds.jsonl",
+        append_json_line(
+            output_dir / "holds.jsonl",
             {"task_id": None, "code": "configuration", "requirement": ", ".join(missing)},
         )
         return {"status": "hold", "missing": missing, "pending_tasks": len(tasks)}
@@ -87,77 +102,91 @@ def review(
         from openai import OpenAI
 
         client = OpenAI(
-            api_key=config["OPENAI_API_KEY"],
-            base_url=config["OPENAI_BASE_URL"] or None,
+            api_key=settings["OPENAI_API_KEY"],
+            base_url=settings["OPENAI_BASE_URL"] or None,
             max_retries=0,
         )
-    model = config["OPENAI_MODEL"] or "test-model"
-    version = fingerprint(
+    model = settings["OPENAI_MODEL"] or "test-model"
+    version = json_fingerprint(
         {
             "run": manifest["fingerprint"],
-            "policy": POLICY,
+            "policy": POLICY_VERSION,
             "model": model,
             "instructions": INSTRUCTIONS,
-            "endpoint": fingerprint(config["OPENAI_BASE_URL"] or "default"),
-            "tools": tools(),
+            "endpoint": json_fingerprint(settings["OPENAI_BASE_URL"] or "default"),
+            "tools": build_evidence_tools(),
             "result_schema": ReviewResult.model_json_schema(),
         }
     )
-    write(
-        out / "review-state.json",
+    write_json(
+        output_dir / "review-state.json",
         {"manifest": manifest["fingerprint"], "version": version, "model": model},
     )
-    existing = rows(out / "decisions.jsonl") if (out / "decisions.jsonl").is_file() else []
-    done = {
-        x["task_id"]
-        for x in existing
-        if x["version"] == version
-        and x["status"] == "decided"
-        and all(s["activity"] != "uncertain" for s in x["result"]["segments"])
+    existing_decisions = (
+        read_json_lines(output_dir / "decisions.jsonl")
+        if (output_dir / "decisions.jsonl").is_file()
+        else []
+    )
+    completed_task_ids = {
+        record["task_id"]
+        for record in existing_decisions
+        if record["version"] == version
+        and record["status"] == "decided"
+        and all(segment["activity"] != "uncertain" for segment in record["result"]["segments"])
     }
-    calls = rows(out / "api-calls.jsonl") if (out / "api-calls.jsonl").is_file() else []
-    used = sum(x["event"] == "attempt" for x in calls)
-    completed = held = 0
-    cache = FrameCache(max_bytes=max_cache_mb * 1024 * 1024)
+    api_call_events = (
+        read_json_lines(output_dir / "api-calls.jsonl")
+        if (output_dir / "api-calls.jsonl").is_file()
+        else []
+    )
+    api_attempt_count = sum(event["event"] == "attempt" for event in api_call_events)
+    completed_task_count = held_attempt_count = 0
+    frame_cache = FrameCache(max_bytes=max_cache_mb * 1024 * 1024)
     for task in tasks:
-        if task["task_id"] in done:
+        if task["task_id"] in completed_task_ids:
             continue
-        provider = EvidenceProvider(out, manifest, catalog, task, max_images, cache)
-        a, b = task["editable"]
-        initial = sorted({a, (a + b - 1) // 2, b - 1})
+        provider = EvidenceProvider(output_dir, manifest, catalog, task, max_images, frame_cache)
+        start_index, end_index = task["editable"]
+        initial_indices = sorted({start_index, (start_index + end_index - 1) // 2, end_index - 1})
         # Very short tasks use context to supply two distinct observations.
-        if len(initial) < 2:
-            initial = sorted(
-                set(initial + [max(task["context"][0], a - 1), min(task["context"][1] - 1, b)])
+        if len(initial_indices) < 2:
+            initial_indices = sorted(
+                set(
+                    initial_indices
+                    + [
+                        max(task["context"][0], start_index - 1),
+                        min(task["context"][1] - 1, end_index),
+                    ]
+                )
             )
         descriptor = {
             "task_id": task["task_id"],
-            "policy_version": POLICY,
-            "editable": [catalog.boundary(a), catalog.boundary(b)],
+            "policy_version": POLICY_VERSION,
+            "editable": [catalog.boundary(start_index), catalog.boundary(end_index)],
             "context": [catalog.boundary(x) for x in task["context"]],
         }
-        history = []
+        conversation = []
         status, reason, decision = "hold", "round_limit", None
         try:
-            history.append(
+            conversation.append(
                 {
                     "role": "user",
                     "content": [
                         {"type": "input_text", "text": json.dumps(descriptor)},
-                        *provider.get_frames([catalog.boundary(i) for i in initial]),
+                        *provider.get_frames([catalog.boundary(i) for i in initial_indices]),
                     ],
                 }
             )
             for _ in range(max_rounds):
-                if used >= max_api_calls:
+                if api_attempt_count >= max_api_calls:
                     reason = "api_budget"
                     break
-                used += 1
-                append(
-                    out / "api-calls.jsonl",
+                api_attempt_count += 1
+                append_json_line(
+                    output_dir / "api-calls.jsonl",
                     {
                         "event": "attempt",
-                        "number": used,
+                        "number": api_attempt_count,
                         "task_id": task["task_id"],
                         "model": model,
                     },
@@ -165,8 +194,8 @@ def review(
                 response = client.responses.create(
                     model=model,
                     instructions=INSTRUCTIONS,
-                    input=history,
-                    tools=tools(),
+                    input=conversation,
+                    tools=build_evidence_tools(),
                     parallel_tool_calls=False,
                     text={
                         "format": {
@@ -178,11 +207,11 @@ def review(
                     },
                 )
                 usage = getattr(response, "usage", None)
-                append(
-                    out / "api-calls.jsonl",
+                append_json_line(
+                    output_dir / "api-calls.jsonl",
                     {
                         "event": "response",
-                        "number": used,
+                        "number": api_attempt_count,
                         "task_id": task["task_id"],
                         "response_id": response.id,
                         "model": getattr(response, "model", model),
@@ -192,15 +221,15 @@ def review(
                 if getattr(response, "status", "completed") != "completed":
                     reason = "incomplete_response"
                     break
-                history.extend(response.output)
-                requested = [x for x in response.output if x.type == "function_call"]
-                if requested:
-                    for call in requested:
+                conversation.extend(response.output)
+                tool_calls = [item for item in response.output if item.type == "function_call"]
+                if tool_calls:
+                    for call in tool_calls:
                         if call.name not in ("get_frames", "get_sequence"):
                             raise ValueError("unknown evidence tool")
                         arguments = json.loads(call.arguments)
-                        append(
-                            out / "tools.jsonl",
+                        append_json_line(
+                            output_dir / "tools.jsonl",
                             {"task_id": task["task_id"], "tool": call.name, "arguments": arguments},
                         )
                         try:
@@ -211,7 +240,7 @@ def review(
                                     "error": "invalid scope, references, crop or image budget; request a valid smaller view"
                                 }
                             )
-                        history.append(
+                        conversation.append(
                             {
                                 "type": "function_call_output",
                                 "call_id": call.call_id,
@@ -219,7 +248,7 @@ def review(
                             }
                         )
                     continue
-                decision = validate_result(
+                decision = validate_review_result(
                     json.loads(response.output_text), catalog, task, provider.seen
                 )
                 status = "decided"
@@ -232,7 +261,7 @@ def review(
         except Exception as error:
             # SDK error text can contain credentials or a private request; only classify it.
             reason = "review_error:" + type(error).__name__
-        record = {
+        decision_record = {
             "task_id": task["task_id"],
             "manifest": manifest["fingerprint"],
             "version": version,
@@ -244,13 +273,13 @@ def review(
             "decode_opens": provider.decode_opens,
             "cache_hits": provider.cache_hits,
         }
-        append(out / "decisions.jsonl", record)
+        append_json_line(output_dir / "decisions.jsonl", decision_record)
         if status == "decided" and reason is None:
-            completed += 1
+            completed_task_count += 1
         else:
-            held += 1
-            append(
-                out / "holds.jsonl",
+            held_attempt_count += 1
+            append_json_line(
+                output_dir / "holds.jsonl",
                 {
                     "task_id": task["task_id"],
                     "code": reason,
@@ -260,8 +289,10 @@ def review(
         if reason == "api_budget":
             break
     return {
-        "status": "complete" if completed + len(done) == len(tasks) else "hold",
-        "decided": completed + len(done),
-        "held_attempts": held,
-        "api_attempts": used,
+        "status": "complete"
+        if completed_task_count + len(completed_task_ids) == len(tasks)
+        else "hold",
+        "decided": completed_task_count + len(completed_task_ids),
+        "held_attempts": held_attempt_count,
+        "api_attempts": api_attempt_count,
     }

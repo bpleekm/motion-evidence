@@ -2,19 +2,27 @@ import json
 
 import pytest
 
-from motion_evidence.common import POLICY, Catalog, digest, load, open_run, rows, write
-from motion_evidence.merge import merge
-from motion_evidence.models import validate_result
-from motion_evidence.prepare import prepare
+from motion_evidence.artifacts import (
+    file_sha256,
+    load_review_run,
+    read_json,
+    read_json_lines,
+    write_json,
+)
+from motion_evidence.catalog import FrameCatalog
+from motion_evidence.planning import prepare_review_run
+from motion_evidence.policy import POLICY_VERSION
+from motion_evidence.schemas import validate_review_result
+from motion_evidence.timeline import merge_timeline
 
 
 def test_lock_splits_editable_and_is_immutable(prepared, tmp_path):
     _, detector, frames = prepared
     path = tmp_path / "locks.json"
-    write(
+    write_json(
         path,
         {
-            "policy_version": POLICY,
+            "policy_version": POLICY_VERSION,
             "segments": [
                 {
                     "start_frame_id": frames[2]["frame_id"],
@@ -26,11 +34,11 @@ def test_lock_splits_editable_and_is_immutable(prepared, tmp_path):
         },
     )
     out = tmp_path / "locked"
-    prepare(detector, out, locks_file=path)
-    _, _, tasks = open_run(out)
+    prepare_review_run(detector, out, locks_file=path)
+    _, _, tasks = load_review_run(out)
     assert len(tasks) == 2
     assert all(not (a < 4 and b > 2) for a, b in (x["editable"] for x in tasks))
-    timeline = merge(out)
+    timeline = merge_timeline(out)
     assert timeline["status"] == "hold"
     assert any(
         x["source"] == "locked"
@@ -43,23 +51,23 @@ def test_lock_splits_editable_and_is_immutable(prepared, tmp_path):
 
 def test_person_presence_is_not_a_review_trigger(prepared, tmp_path):
     _, detector, _ = prepared
-    observations = rows(detector / "observations.jsonl")
+    observations = read_json_lines(detector / "observations.jsonl")
     for row in observations:
         row.update(mog_pass=False, motion_pass=False, has_candidate=False)
     (detector / "observations.jsonl").write_text(
         "".join(json.dumps(x) + "\n" for x in observations)
     )
-    status = load(detector / "status.json")
-    status["artifacts"]["observations.jsonl"] = digest(detector / "observations.jsonl")
-    write(detector / "status.json", status)
+    status = read_json(detector / "status.json")
+    status["artifacts"]["observations.jsonl"] = file_sha256(detector / "observations.jsonl")
+    write_json(detector / "status.json", status)
     out = tmp_path / "static-person"
-    prepare(detector, out)
-    assert not open_run(out)[2]
+    prepare_review_run(detector, out)
+    assert not load_review_run(out)[2]
 
 
 def test_rejects_unseen_evidence_and_gaps(prepared):
     out, _, frames = prepared
-    _, catalog, tasks = open_run(out)
+    _, catalog, tasks = load_review_run(out)
     task = tasks[0]
     segment = {
         "start_frame_id": catalog.boundary(task["editable"][0]),
@@ -69,26 +77,28 @@ def test_rejects_unseen_evidence_and_gaps(prepared):
         "reason": "synthetic",
     }
     with pytest.raises(ValueError):
-        validate_result({"segments": [segment]}, catalog, task, {frames[0]["frame_id"]})
+        validate_review_result({"segments": [segment]}, catalog, task, {frames[0]["frame_id"]})
     segment["start_frame_id"] = frames[1]["frame_id"]
     with pytest.raises(ValueError, match="gap"):
-        validate_result({"segments": [segment]}, catalog, task, {x["frame_id"] for x in frames})
+        validate_review_result(
+            {"segments": [segment]}, catalog, task, {x["frame_id"] for x in frames}
+        )
 
 
 def test_missing_detector_holds_and_tampering_rejects(prepared, tmp_path):
-    assert prepare(tmp_path / "absent", tmp_path / "missing")["status"] == "hold"
-    assert merge(tmp_path / "missing")["status"] == "hold"
+    assert prepare_review_run(tmp_path / "absent", tmp_path / "missing")["status"] == "hold"
+    assert merge_timeline(tmp_path / "missing")["status"] == "hold"
     out, _, _ = prepared
     (out / "tasks.jsonl").write_text("")
     with pytest.raises(ValueError, match="changed"):
-        open_run(out)
+        load_review_run(out)
 
 
 def update_detector(detector, name, values):
     (detector / name).write_text("".join(json.dumps(value) + "\n" for value in values))
-    status = load(detector / "status.json")
-    status["artifacts"][name] = digest(detector / name)
-    write(detector / "status.json", status)
+    status = read_json(detector / "status.json")
+    status["artifacts"][name] = file_sha256(detector / name)
+    write_json(detector / "status.json", status)
 
 
 @pytest.mark.parametrize(
@@ -109,20 +119,20 @@ def test_catalog_rejects_source_mismatch_despite_updated_artifact_hash(
     changed[2][field] = value
     update_detector(detector, "frames.jsonl", changed)
     with pytest.raises(ValueError, match="catalog"):
-        prepare(detector, tmp_path / "wrong-catalog")
+        prepare_review_run(detector, tmp_path / "wrong-catalog")
 
 
 @pytest.mark.parametrize("fault", ["sequence", "duplicate-frame"])
 def test_observation_order_is_checked(prepared, tmp_path, fault):
     _, detector, _ = prepared
-    observed = rows(detector / "observations.jsonl")
+    observed = read_json_lines(detector / "observations.jsonl")
     if fault == "sequence":
         observed[1]["seq"] = observed[0]["seq"]
     else:
         observed[1].update(frame_id=observed[0]["frame_id"], time_ms=observed[0]["time_ms"])
     update_detector(detector, "observations.jsonl", observed)
     with pytest.raises(ValueError, match="observation"):
-        prepare(detector, tmp_path / "wrong-order")
+        prepare_review_run(detector, tmp_path / "wrong-order")
 
 
 def test_catalog_uses_file_offset_and_native_time_base():
@@ -161,7 +171,7 @@ def test_catalog_uses_file_offset_and_native_time_base():
                     "height": 12,
                 }
             )
-    catalog = Catalog(frames, {"total_ms": 250, "files": files})
+    catalog = FrameCatalog(frames, {"total_ms": 250, "files": files})
     assert catalog.time(catalog.index("second:s0:pts575")) == 175
     assert catalog.time(catalog.index("@end")) == 250
 
@@ -170,7 +180,7 @@ def test_upstream_person_hold_survives_prepare_and_report(prepared, tmp_path, mo
     from motion_evidence.cli import main
 
     _, detector, _ = prepared
-    status = load(detector / "status.json")
+    status = read_json(detector / "status.json")
     status["person"] = {
         "backend": "opencl-fp32",
         "requested": 2,
@@ -178,12 +188,12 @@ def test_upstream_person_hold_survives_prepare_and_report(prepared, tmp_path, mo
         "held": 2,
         "hold_code": "person_model",
     }
-    write(detector / "status.json", status)
+    write_json(detector / "status.json", status)
     out = tmp_path / "upstream-hold"
-    prepare(detector, out)
-    manifest, _, _ = open_run(out)
+    prepare_review_run(detector, out)
+    manifest, _, _ = load_review_run(out)
     assert manifest["upstream_holds"] == [status["person"]]
-    merge(out)
+    merge_timeline(out)
     monkeypatch.setattr("sys.argv", ["motion-evidence", "report", "--run", str(out)])
     main()
     assert json.loads(capsys.readouterr().out)["upstream_holds"] == 1

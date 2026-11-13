@@ -7,7 +7,7 @@ from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 
-from .common import append, digest, fingerprint, load, write
+from .artifacts import append_json_line, file_sha256, json_fingerprint, read_json, write_json
 
 
 class FrameCache:
@@ -92,7 +92,7 @@ class EvidenceProvider:
                 "image_sha256": sha256(data).hexdigest(),
                 "task_id": self.task["task_id"],
             }
-            append(self.out / "evidence.jsonl", view)
+            append_json_line(self.out / "evidence.jsonl", view)
             self.views.append(view)
             self.seen.add(ref["frame_id"])
             import json
@@ -125,7 +125,7 @@ class EvidenceProvider:
 
     def _path(self, ref):
         return self.cache / (
-            fingerprint(
+            json_fingerprint(
                 {
                     "file": self.files[ref["file_id"]]["sha256"],
                     "stream": ref["stream_index"],
@@ -145,14 +145,14 @@ class EvidenceProvider:
             stat = Path(item["path"]).stat()
             identity = (item["sha256"], item["path"], stat.st_size, stat.st_mtime_ns)
             if identity not in self.memory.verified:
-                if digest(item["path"]) != item["sha256"]:
+                if file_sha256(item["path"]) != item["sha256"]:
                     raise ValueError("source media fingerprint changed")
                 self.memory.verified.add(identity)
             path = self._path(ref)
             if path.is_file():
-                receipt = load(path.with_suffix(".json"))
+                receipt = read_json(path.with_suffix(".json"))
                 if (
-                    receipt["image_sha256"] != digest(path)
+                    receipt["image_sha256"] != file_sha256(path)
                     or receipt["frame_id"] != ref["frame_id"]
                 ):
                     raise ValueError("cached source image changed")
@@ -198,6 +198,7 @@ class EvidenceProvider:
     def _persist(self, ref, image):
         path = self._path(ref)
         image.save(path, format="PNG")
-        write(
-            path.with_suffix(".json"), {"frame_id": ref["frame_id"], "image_sha256": digest(path)}
+        write_json(
+            path.with_suffix(".json"),
+            {"frame_id": ref["frame_id"], "image_sha256": file_sha256(path)},
         )

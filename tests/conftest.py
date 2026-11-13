@@ -6,8 +6,8 @@ import av
 import numpy as np
 import pytest
 
-from motion_evidence.common import digest, write
-from motion_evidence.prepare import prepare
+from motion_evidence.artifacts import file_sha256, write_json
+from motion_evidence.planning import prepare_review_run
 
 
 @pytest.fixture
@@ -66,7 +66,7 @@ def prepared(tmp_path):
     }
     detector = tmp_path / "detect"
     detector.mkdir()
-    write(detector / "source.json", source)
+    write_json(detector / "source.json", source)
     observations = [
         {
             "frame_id": f["frame_id"],
@@ -83,16 +83,16 @@ def prepared(tmp_path):
     ]
     for name, values in (("frames.jsonl", frames), ("observations.jsonl", observations)):
         (detector / name).write_text("".join(json.dumps(x) + "\n" for x in values))
-    write(
+    write_json(
         detector / "status.json",
         {
             "status": "complete",
             "artifacts": {
-                name: digest(detector / name)
+                name: file_sha256(detector / name)
                 for name in ("source.json", "frames.jsonl", "observations.jsonl")
             },
         },
     )
     out = tmp_path / "review"
-    prepare(detector, out, context_ms=1000)
+    prepare_review_run(detector, out, context_ms=1000)
     return out, detector, frames

@@ -1,3 +1,5 @@
+"""Strict review output structures and evidence-backed range validation."""
+
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -17,22 +19,29 @@ class ReviewResult(BaseModel):
     segments: list[Segment] = Field(min_length=1)
 
 
-def validate_result(value, catalog, task, seen):
+def validate_review_result(value, catalog, task, seen):
     result = ReviewResult.model_validate(value)
     cursor = task["editable"][0]
     endpoints = set(task["editable"])
     for segment in result.segments:
-        a, b = catalog.index(segment.start_frame_id), catalog.index(segment.end_frame_id_exclusive)
-        if a != cursor or not a < b <= task["editable"][1]:
+        start_index = catalog.index(segment.start_frame_id)
+        end_index = catalog.index(segment.end_frame_id_exclusive)
+        if start_index != cursor or not start_index < end_index <= task["editable"][1]:
             raise ValueError("review contains gap, overlap or editable-range violation")
-        if a not in endpoints and segment.start_frame_id not in seen:
+        if start_index not in endpoints and segment.start_frame_id not in seen:
             raise ValueError("unseen start boundary")
-        if b not in endpoints and segment.end_frame_id_exclusive not in seen:
+        if end_index not in endpoints and segment.end_frame_id_exclusive not in seen:
             raise ValueError("unseen end boundary")
-        ids = set(segment.evidence_frame_ids)
-        if not ids <= seen or len({catalog.frames[catalog.index(x)]["time_ms"] for x in ids}) < 2:
+        evidence_ids = set(segment.evidence_frame_ids)
+        if (
+            not evidence_ids <= seen
+            or len(
+                {catalog.frames[catalog.index(frame_id)]["time_ms"] for frame_id in evidence_ids}
+            )
+            < 2
+        ):
             raise ValueError("review must cite at least two actually delivered source times")
-        cursor = b
+        cursor = end_index
     if cursor != task["editable"][1]:
         raise ValueError("review does not cover the whole editable range")
     return result.model_dump()

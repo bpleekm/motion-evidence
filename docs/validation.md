@@ -25,3 +25,9 @@
 `tools/integration_smoke.py --detect-repo "$DETECT_REPO" --out "$RUN_ROOT/integration"`通过子进程调用检测端CLI，不导入对方Python模块。它生成合成H.264、验证全帧索引、显式锁定、缺env hold、实际原帧工具输出、模拟裁决、最终覆盖以及缺输入hold。
 
 可加`--backend native-gpu --native-build "$NATIVE_BUILD"`验证原生GPU入口。所有产物写新建的外部目录；烟测使用自行生成的空env和模拟Responses，不读取真实API凭据、不发计费请求，不能作为视觉准确率验证。
+
+## 内部命名与模块整理回归
+
+本次职责拆分通过21项现有测试及Ruff检查；CPU/native-GPU两条独立CLI链路各完成120解码帧/30选帧、2个任务和6000ms完整覆盖，锁定范围保持，缺配置hold后模拟工具裁决及缺源hold均通过。
+
+wheel检查包含拆分后的产物、帧目录、区间、规则、规划、OpenAI、校验和时间线模块，不再包含旧内部模块，不打包env、媒体、模型或编译二进制。CLI命令、文件协议和严格结果Schema保持。

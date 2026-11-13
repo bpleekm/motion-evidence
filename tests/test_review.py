@@ -1,24 +1,24 @@
 import json
 from types import SimpleNamespace
 
-from motion_evidence.backend import review, settings
-from motion_evidence.common import open_run, rows
-from motion_evidence.merge import merge
-from motion_evidence.prepare import prepare
+from motion_evidence.artifacts import load_review_run, read_json_lines
+from motion_evidence.openai_backend import load_openai_settings, review_tasks
+from motion_evidence.planning import prepare_review_run
+from motion_evidence.timeline import merge_timeline
 
 
 def test_missing_env_holds_without_inheriting_credentials(prepared, tmp_path, monkeypatch):
     out, _, _ = prepared
     monkeypatch.setenv("OPENAI_API_KEY", "inherited-value-must-not-be-used")
-    assert not settings(tmp_path / "missing.env")["OPENAI_API_KEY"]
-    assert review(out, tmp_path / "missing.env", 2)["status"] == "hold"
-    result = merge(out)
+    assert not load_openai_settings(tmp_path / "missing.env")["OPENAI_API_KEY"]
+    assert review_tasks(out, tmp_path / "missing.env", 2)["status"] == "hold"
+    result = merge_timeline(out)
     assert result["status"] == "hold" and result["summary"]["accelerate_ms"] == 0
 
 
 def test_actual_image_tool_outputs_call_ids_and_resume(prepared, tmp_path):
     out, _, frames = prepared
-    _, catalog, tasks = open_run(out)
+    _, catalog, tasks = load_review_run(out)
     task = tasks[0]
 
     class Responses:
@@ -71,9 +71,9 @@ def test_actual_image_tool_outputs_call_ids_and_resume(prepared, tmp_path):
 
     responses = Responses()
     client = SimpleNamespace(responses=responses)
-    assert review(out, tmp_path / "missing.env", 2, client=client)["status"] == "complete"
-    assert merge(out)["summary"]["accelerate_ms"] == catalog.time(task["editable"][1])
-    assert review(out, tmp_path / "missing.env", 2, client=client)["api_attempts"] == 2
+    assert review_tasks(out, tmp_path / "missing.env", 2, client=client)["status"] == "complete"
+    assert merge_timeline(out)["summary"]["accelerate_ms"] == catalog.time(task["editable"][1])
+    assert review_tasks(out, tmp_path / "missing.env", 2, client=client)["api_attempts"] == 2
     assert responses.count == 2
 
 
@@ -89,16 +89,18 @@ def test_error_sanitization_and_total_attempt_budget(prepared, tmp_path):
 
     responses = Broken()
     client = SimpleNamespace(responses=responses)
-    assert review(out, tmp_path / "missing.env", 1, client=client)["status"] == "hold"
+    assert review_tasks(out, tmp_path / "missing.env", 1, client=client)["status"] == "hold"
     assert "credential-example" not in (out / "decisions.jsonl").read_text()
-    review(out, tmp_path / "missing.env", 1, client=client)
+    review_tasks(out, tmp_path / "missing.env", 1, client=client)
     assert responses.count == 1
-    assert len([x for x in rows(out / "api-calls.jsonl") if x["event"] == "attempt"]) == 1
+    assert (
+        len([x for x in read_json_lines(out / "api-calls.jsonl") if x["event"] == "attempt"]) == 1
+    )
 
 
 def test_uncertain_result_remains_hold(prepared, tmp_path):
     out, _, frames = prepared
-    _, catalog, tasks = open_run(out)
+    _, catalog, tasks = load_review_run(out)
     task = tasks[0]
 
     class Uncertain:
@@ -124,15 +126,15 @@ def test_uncertain_result_remains_hold(prepared, tmp_path):
             )
 
     assert (
-        review(out, tmp_path / "missing.env", 1, client=SimpleNamespace(responses=Uncertain()))[
-            "status"
-        ]
+        review_tasks(
+            out, tmp_path / "missing.env", 1, client=SimpleNamespace(responses=Uncertain())
+        )["status"]
         == "hold"
     )
-    assert merge(out)["status"] == "hold"
+    assert merge_timeline(out)["status"] == "hold"
 
 
 def test_upstream_missing_remains_hold(tmp_path):
     out = tmp_path / "missing"
-    prepare(tmp_path / "absent", out)
-    assert review(out, tmp_path / "missing.env", 1)["status"] == "hold"
+    prepare_review_run(tmp_path / "absent", out)
+    assert review_tasks(out, tmp_path / "missing.env", 1)["status"] == "hold"

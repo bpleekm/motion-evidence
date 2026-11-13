@@ -137,8 +137,9 @@ def main():
     root.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(repo / "src"))
-    from motion_evidence.backend import review
-    from motion_evidence.common import POLICY, load, open_run, rows, write
+    from motion_evidence.artifacts import load_review_run, read_json, read_json_lines, write_json
+    from motion_evidence.openai_backend import review_tasks
+    from motion_evidence.policy import POLICY_VERSION
 
     video = root / "synthetic.mp4"
     generate(video)
@@ -154,12 +155,12 @@ def main():
         and detected["decoded_frames"] == 120
         and detected["selected_frames"] == 30
     )
-    indexed = rows(root / "detect/frames.jsonl")
+    indexed = read_json_lines(root / "detect/frames.jsonl")
     locks = root / "locks.json"
-    write(
+    write_json(
         locks,
         {
-            "policy_version": POLICY,
+            "policy_version": POLICY_VERSION,
             "segments": [
                 {
                     "start_frame_id": indexed[0]["frame_id"],
@@ -195,10 +196,10 @@ def main():
     )
     assert held["status"] == "hold"
     cli("motion_evidence.cli", ["merge", "--run", root / "review"], repo / "src", root)
-    before = load(root / "review/timeline.json")
+    before = read_json(root / "review/timeline.json")
     assert before["status"] == "hold"
-    _, catalog, tasks = open_run(root / "review")
-    simulated = review(
+    _, catalog, tasks = load_review_run(root / "review")
+    simulated = review_tasks(
         root / "review",
         env_file,
         max_api_calls=2 * len(tasks),
@@ -206,7 +207,7 @@ def main():
     )
     assert simulated["status"] == "complete"
     cli("motion_evidence.cli", ["merge", "--run", root / "review"], repo / "src", root)
-    after = load(root / "review/timeline.json")
+    after = read_json(root / "review/timeline.json")
     assert after["status"] == "complete" and after["summary"]["total_ms"] == 6000
     assert any(
         x["source"] == "locked"
@@ -250,7 +251,7 @@ def main():
         "missing_input_hold": True,
         "review_execution": "synthetic protocol replay; no real OpenAI request or visual-quality claim",
     }
-    write(root / "integration.json", summary)
+    write_json(root / "integration.json", summary)
     print(json.dumps(summary))
 
 
