@@ -2,7 +2,7 @@
 
 Python>=3.11。venv/缓存/pytest/build目录统一外置，配置`TMPDIR`、`XDG_CACHE_HOME`、`PYTHONDONTWRITEBYTECODE=1`。源数据和检测结果是只读输入。
 
-本地复制`.env.example`为`.env`并设为仅所有者可读写。配置OPENAI_API_KEY、OPENAI_MODEL；可选BASE_URL不携带凭据。加载器只读指定env文件，不借用其他session的shell密钥。密钥不进入命令行、仓库或日志。
+本地复制`.env.example`为`.env`并设为仅所有者可读写。配置OPENAI_API_KEY、OPENAI_MODEL；可选OPENAI_BASE_URL不携带凭据。加载器只读指定env文件，不借用其他session的shell密钥。密钥不进入命令行、仓库或日志。产物目录由CLI的`--out`/`--run`指定。
 
 prepare新建运行，review独立调用，merge可在没有API配置时先跑通，输出未决保留和hold。后续集中填写配置/补齐素材，重新review并merge；成功任务按当前版本跳过。不要编辑已准备的manifest/index/tasks；输入改变应建立新运行。
 
