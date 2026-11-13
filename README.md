@@ -28,3 +28,5 @@ export PYTHONPATH="$EVIDENCE_REPO/src"
 [产品](docs/product.md) · [架构](docs/architecture.md) · [核心方案](docs/core-design.md) · [协议](docs/contracts.md) · [验证](docs/validation.md) · [运行](docs/operations.md) · [路线](docs/roadmap.md)
 
 当前是可验证的首版harness，不把离线模拟、hold合并或格式合法宣称为真实AI视觉效果验证。
+
+已完成21项单元/合同测试，CPU reference和原生GPU两条跨仓库CLI链路均已通过合成烟测。复现入口为`tools/integration_smoke.py`，参见[验证说明](docs/validation.md)；实际OpenAI请求和语义质量仍单独hold验收。

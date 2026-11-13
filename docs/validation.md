@@ -19,3 +19,9 @@
 记录模型/提示词/规则/输入/evidence指纹、图像和token数量、实际usage、取证解码次数与缓存命中、端到端耗时。模拟API仅验证软件协议，不报告为AI识别准确率。
 
 所有真实测试产物在外部私有根。源工作区只读，GPU旧性能不当作本项目成绩。
+
+## 跨仓库主流程烟测
+
+`tools/integration_smoke.py --detect-repo "$DETECT_REPO" --out "$RUN_ROOT/integration"`通过子进程调用检测端CLI，不导入对方Python模块。它生成合成H.264、验证全帧索引、显式锁定、缺env hold、实际原帧工具输出、模拟裁决、最终覆盖以及缺输入hold。
+
+可加`--backend native-gpu --native-build "$NATIVE_BUILD"`验证原生GPU入口。所有产物写新建的外部目录；烟测使用自行生成的空env和模拟Responses，不读取真实API凭据、不发计费请求，不能作为视觉准确率验证。
