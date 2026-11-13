@@ -38,3 +38,13 @@ def test_scope_and_cache_integrity(prepared):
     provider._path(frames[2]).write_bytes(b"corrupted-cache")
     with pytest.raises(ValueError, match="changed"):
         provider.get_frames([frames[2]["frame_id"]])
+
+
+def test_sequence_checks_the_whole_range_before_sparse_sampling(prepared):
+    out, _, frames = prepared
+    manifest, catalog, tasks = open_run(out)
+    provider = EvidenceProvider(out, manifest, catalog, dict(tasks[0], context=[2, 5]))
+    # A very large step must not disguise an out-of-context end boundary.
+    with pytest.raises(ValueError, match="sequence outside"):
+        provider.get_sequence(frames[2]["frame_id"], frames[7]["frame_id"], step_frames=20)
+    assert provider.decode_opens == 0 and not provider.seen

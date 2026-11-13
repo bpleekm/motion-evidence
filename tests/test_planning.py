@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from motion_evidence.common import POLICY, digest, load, open_run, rows, write
+from motion_evidence.common import POLICY, Catalog, digest, load, open_run, rows, write
 from motion_evidence.merge import merge
 from motion_evidence.models import validate_result
 from motion_evidence.prepare import prepare
@@ -56,3 +56,71 @@ def test_missing_detector_holds_and_tampering_rejects(prepared, tmp_path):
     (out / "tasks.jsonl").write_text("")
     with pytest.raises(ValueError, match="changed"):
         open_run(out)
+
+
+def update_detector(detector, name, values):
+    (detector / name).write_text("".join(json.dumps(value) + "\n" for value in values))
+    status = load(detector / "status.json")
+    status["artifacts"][name] = digest(detector / name)
+    write(detector / "status.json", status)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("frame_id", "different-frame"),
+    ("stream_index", 1),
+    ("time_base", [1, 2000]),
+    ("time_ms", 151),
+    ("width", 33),
+])
+def test_catalog_rejects_source_mismatch_despite_updated_artifact_hash(prepared, tmp_path, field, value):
+    _, detector, frames = prepared
+    changed = [dict(frame) for frame in frames]
+    changed[2][field] = value
+    update_detector(detector, "frames.jsonl", changed)
+    with pytest.raises(ValueError, match="catalog"):
+        prepare(detector, tmp_path / "wrong-catalog")
+
+
+@pytest.mark.parametrize("fault", ["sequence", "duplicate-frame"])
+def test_observation_order_is_checked(prepared, tmp_path, fault):
+    _, detector, _ = prepared
+    observed = rows(detector / "observations.jsonl")
+    if fault == "sequence":
+        observed[1]["seq"] = observed[0]["seq"]
+    else:
+        observed[1].update(frame_id=observed[0]["frame_id"], time_ms=observed[0]["time_ms"])
+    update_detector(detector, "observations.jsonl", observed)
+    with pytest.raises(ValueError, match="observation"):
+        prepare(detector, tmp_path / "wrong-order")
+
+
+def test_catalog_uses_file_offset_and_native_time_base():
+    files = [
+        {"file_id": "first", "stream_index": 1, "time_base": [1, 20], "start_us": 0, "source_start_pts": 10, "width": 16, "height": 12},
+        {"file_id": "second", "stream_index": 0, "time_base": [1, 1000], "start_us": 100000, "source_start_pts": 500, "width": 16, "height": 12},
+    ]
+    frames = []
+    for item, points in zip(files, ((10, 11), (500, 575))):
+        for pts, ms in zip(points, (0, 50) if item["file_id"] == "first" else (100, 175)):
+            frames.append({"frame_id": f"{item['file_id']}:s{item['stream_index']}:pts{pts}", "file_id": item["file_id"],
+                           "stream_index": item["stream_index"], "pts": pts, "time_base": item["time_base"],
+                           "time_ms": ms, "width": 16, "height": 12})
+    catalog = Catalog(frames, {"total_ms": 250, "files": files})
+    assert catalog.time(catalog.index("second:s0:pts575")) == 175
+    assert catalog.time(catalog.index("@end")) == 250
+
+
+def test_upstream_person_hold_survives_prepare_and_report(prepared, tmp_path, monkeypatch, capsys):
+    from motion_evidence.cli import main
+    _, detector, _ = prepared
+    status = load(detector / "status.json")
+    status["person"] = {"backend": "opencl-fp32", "requested": 2, "completed": 0, "held": 2, "hold_code": "person_model"}
+    write(detector / "status.json", status)
+    out = tmp_path / "upstream-hold"
+    prepare(detector, out)
+    manifest, _, _ = open_run(out)
+    assert manifest["upstream_holds"] == [status["person"]]
+    merge(out)
+    monkeypatch.setattr("sys.argv", ["motion-evidence", "report", "--run", str(out)])
+    main()
+    assert json.loads(capsys.readouterr().out)["upstream_holds"] == 1

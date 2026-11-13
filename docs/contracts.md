@@ -4,6 +4,8 @@
 
 消费motion-detect/v1的source.json、全帧frames.jsonl、observations.jsonl、status.json。先验证complete和产物指纹，再校验唯一帧ID、严格递增实际时间及视频总时长。没有上游Python依赖。
 
+帧ID必须与file_id/stream/PTS一致，stream/time_base/尺寸必须对应源清单；全局ms按source_start_pts和start_us重新计算，不能只接受排序正确但错位的时间。选帧seq及原帧顺序也校验。上游可选人物特征的hold作为upstream_holds保留，不把缺失检测解释为无人。
+
 ## prepare产物
 
 - manifest.json：协议/规则版本、源快照、配置、产物SHA和运行指纹。
