@@ -7,4 +7,5 @@
 - Missing data, configuration, model access or inconclusive output is HOLD, never a fabricated successful AI review.
 - API keys live in local .env files, ignored by Git. Logs contain metadata and sanitized errors, not keys or image data URLs.
 - Commit generic source, schemas, synthetic tests and complete product/architecture/core docs only.
+- Follow docs/code-style.md; keep module responsibilities and descriptive names, with Ruff lint/import/format checks.
 - After checks and staged-content privacy review, commit and push each delivered update using the requested identity. Never change global Git settings.

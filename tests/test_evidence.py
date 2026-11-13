@@ -1,8 +1,8 @@
 from base64 import b64decode
 from io import BytesIO
 
-from PIL import Image
 import pytest
+from PIL import Image
 
 from motion_evidence.common import open_run
 from motion_evidence.evidence import EvidenceProvider, FrameCache
@@ -14,7 +14,11 @@ def test_vfr_exact_pts_roi_and_intermediate_frame_reuse(prepared):
     cache = FrameCache(max_bytes=32 * 24 * 3 * 8)
     provider = EvidenceProvider(out, manifest, catalog, tasks[0], memory_cache=cache)
     content = provider.get_frames([frames[2]["frame_id"], frames[6]["frame_id"]])
-    pixels = [Image.open(BytesIO(b64decode(x["image_url"].split(",", 1)[1]))) for x in content if x["type"] == "input_image"]
+    pixels = [
+        Image.open(BytesIO(b64decode(x["image_url"].split(",", 1)[1])))
+        for x in content
+        if x["type"] == "input_image"
+    ]
     assert [x.size for x in pixels] == [(32, 24), (32, 24)]
     assert abs(pixels[0].getpixel((0, 0))[0] - 40) <= 2
     assert abs(pixels[1].getpixel((0, 0))[0] - 120) <= 2

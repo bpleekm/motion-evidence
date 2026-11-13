@@ -7,6 +7,7 @@
 - 合成、真实质量与成本验证：[validation](validation.md)
 - env、命令、hold、隐私：[operations](operations.md)
 - 版本状态：[roadmap](roadmap.md)
+- 代码规范：[code-style](code-style.md)
 - 决策：[ADR-0001](adr/0001-bounded-review.md)
 
 规则、实现、实测三种状态分别记录，示例不等于实测结论。

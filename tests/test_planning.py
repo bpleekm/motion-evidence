@@ -11,7 +11,20 @@ from motion_evidence.prepare import prepare
 def test_lock_splits_editable_and_is_immutable(prepared, tmp_path):
     _, detector, frames = prepared
     path = tmp_path / "locks.json"
-    write(path, {"policy_version": POLICY, "segments": [{"start_frame_id": frames[2]["frame_id"], "end_frame_id_exclusive": frames[4]["frame_id"], "action": "accelerate", "reason": "synthetic lock"}]})
+    write(
+        path,
+        {
+            "policy_version": POLICY,
+            "segments": [
+                {
+                    "start_frame_id": frames[2]["frame_id"],
+                    "end_frame_id_exclusive": frames[4]["frame_id"],
+                    "action": "accelerate",
+                    "reason": "synthetic lock",
+                }
+            ],
+        },
+    )
     out = tmp_path / "locked"
     prepare(detector, out, locks_file=path)
     _, _, tasks = open_run(out)
@@ -19,7 +32,13 @@ def test_lock_splits_editable_and_is_immutable(prepared, tmp_path):
     assert all(not (a < 4 and b > 2) for a, b in (x["editable"] for x in tasks))
     timeline = merge(out)
     assert timeline["status"] == "hold"
-    assert any(x["source"] == "locked" and x["start_ms"] == 150 and x["end_ms"] == 400 and x["action"] == "accelerate" for x in timeline["segments"])
+    assert any(
+        x["source"] == "locked"
+        and x["start_ms"] == 150
+        and x["end_ms"] == 400
+        and x["action"] == "accelerate"
+        for x in timeline["segments"]
+    )
 
 
 def test_person_presence_is_not_a_review_trigger(prepared, tmp_path):
@@ -27,7 +46,9 @@ def test_person_presence_is_not_a_review_trigger(prepared, tmp_path):
     observations = rows(detector / "observations.jsonl")
     for row in observations:
         row.update(mog_pass=False, motion_pass=False, has_candidate=False)
-    (detector / "observations.jsonl").write_text("".join(json.dumps(x) + "\n" for x in observations))
+    (detector / "observations.jsonl").write_text(
+        "".join(json.dumps(x) + "\n" for x in observations)
+    )
     status = load(detector / "status.json")
     status["artifacts"]["observations.jsonl"] = digest(detector / "observations.jsonl")
     write(detector / "status.json", status)
@@ -40,8 +61,13 @@ def test_rejects_unseen_evidence_and_gaps(prepared):
     out, _, frames = prepared
     _, catalog, tasks = open_run(out)
     task = tasks[0]
-    segment = {"start_frame_id": catalog.boundary(task["editable"][0]), "end_frame_id_exclusive": catalog.boundary(task["editable"][1]),
-               "activity": "static", "evidence_frame_ids": [frames[0]["frame_id"], frames[1]["frame_id"]], "reason": "synthetic"}
+    segment = {
+        "start_frame_id": catalog.boundary(task["editable"][0]),
+        "end_frame_id_exclusive": catalog.boundary(task["editable"][1]),
+        "activity": "static",
+        "evidence_frame_ids": [frames[0]["frame_id"], frames[1]["frame_id"]],
+        "reason": "synthetic",
+    }
     with pytest.raises(ValueError):
         validate_result({"segments": [segment]}, catalog, task, {frames[0]["frame_id"]})
     segment["start_frame_id"] = frames[1]["frame_id"]
@@ -65,14 +91,19 @@ def update_detector(detector, name, values):
     write(detector / "status.json", status)
 
 
-@pytest.mark.parametrize("field,value", [
-    ("frame_id", "different-frame"),
-    ("stream_index", 1),
-    ("time_base", [1, 2000]),
-    ("time_ms", 151),
-    ("width", 33),
-])
-def test_catalog_rejects_source_mismatch_despite_updated_artifact_hash(prepared, tmp_path, field, value):
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("frame_id", "different-frame"),
+        ("stream_index", 1),
+        ("time_base", [1, 2000]),
+        ("time_ms", 151),
+        ("width", 33),
+    ],
+)
+def test_catalog_rejects_source_mismatch_despite_updated_artifact_hash(
+    prepared, tmp_path, field, value
+):
     _, detector, frames = prepared
     changed = [dict(frame) for frame in frames]
     changed[2][field] = value
@@ -96,15 +127,40 @@ def test_observation_order_is_checked(prepared, tmp_path, fault):
 
 def test_catalog_uses_file_offset_and_native_time_base():
     files = [
-        {"file_id": "first", "stream_index": 1, "time_base": [1, 20], "start_us": 0, "source_start_pts": 10, "width": 16, "height": 12},
-        {"file_id": "second", "stream_index": 0, "time_base": [1, 1000], "start_us": 100000, "source_start_pts": 500, "width": 16, "height": 12},
+        {
+            "file_id": "first",
+            "stream_index": 1,
+            "time_base": [1, 20],
+            "start_us": 0,
+            "source_start_pts": 10,
+            "width": 16,
+            "height": 12,
+        },
+        {
+            "file_id": "second",
+            "stream_index": 0,
+            "time_base": [1, 1000],
+            "start_us": 100000,
+            "source_start_pts": 500,
+            "width": 16,
+            "height": 12,
+        },
     ]
     frames = []
     for item, points in zip(files, ((10, 11), (500, 575))):
         for pts, ms in zip(points, (0, 50) if item["file_id"] == "first" else (100, 175)):
-            frames.append({"frame_id": f"{item['file_id']}:s{item['stream_index']}:pts{pts}", "file_id": item["file_id"],
-                           "stream_index": item["stream_index"], "pts": pts, "time_base": item["time_base"],
-                           "time_ms": ms, "width": 16, "height": 12})
+            frames.append(
+                {
+                    "frame_id": f"{item['file_id']}:s{item['stream_index']}:pts{pts}",
+                    "file_id": item["file_id"],
+                    "stream_index": item["stream_index"],
+                    "pts": pts,
+                    "time_base": item["time_base"],
+                    "time_ms": ms,
+                    "width": 16,
+                    "height": 12,
+                }
+            )
     catalog = Catalog(frames, {"total_ms": 250, "files": files})
     assert catalog.time(catalog.index("second:s0:pts575")) == 175
     assert catalog.time(catalog.index("@end")) == 250
@@ -112,9 +168,16 @@ def test_catalog_uses_file_offset_and_native_time_base():
 
 def test_upstream_person_hold_survives_prepare_and_report(prepared, tmp_path, monkeypatch, capsys):
     from motion_evidence.cli import main
+
     _, detector, _ = prepared
     status = load(detector / "status.json")
-    status["person"] = {"backend": "opencl-fp32", "requested": 2, "completed": 0, "held": 2, "hold_code": "person_model"}
+    status["person"] = {
+        "backend": "opencl-fp32",
+        "requested": 2,
+        "completed": 0,
+        "held": 2,
+        "hold_code": "person_model",
+    }
     write(detector / "status.json", status)
     out = tmp_path / "upstream-hold"
     prepare(detector, out)

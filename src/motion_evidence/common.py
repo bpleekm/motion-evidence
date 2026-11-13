@@ -1,6 +1,6 @@
-from hashlib import file_digest, sha256
-from fractions import Fraction
 import json
+from fractions import Fraction
+from hashlib import file_digest, sha256
 from pathlib import Path
 
 POLICY = "static-all-accelerate/v1"
@@ -70,14 +70,24 @@ class Catalog:
         self.positions = {x["frame_id"]: i for i, x in enumerate(frames)}
         if len(self.positions) != len(frames) or not frames or total_ms <= frames[-1]["time_ms"]:
             raise ValueError("invalid catalog identity or duration")
-        if frames[0]["time_ms"] != 0 or any(a["time_ms"] >= b["time_ms"] for a, b in zip(frames, frames[1:])):
+        if frames[0]["time_ms"] != 0 or any(
+            a["time_ms"] >= b["time_ms"] for a, b in zip(frames, frames[1:])
+        ):
             raise ValueError("frame times must start at zero and increase")
         files = {x["file_id"]: x for x in source["files"]}
         for frame in frames:
             item = files[frame["file_id"]]
             expected_id = f"{frame['file_id']}:s{frame['stream_index']}:pts{frame['pts']}"
-            expected_time = round(Fraction(item["start_us"], 1000) + (frame["pts"] - item["source_start_pts"]) * Fraction(*frame["time_base"]) * 1000)
-            if frame["frame_id"] != expected_id or frame["stream_index"] != item["stream_index"] or frame["time_base"] != item["time_base"] or frame["time_ms"] != expected_time:
+            expected_time = round(
+                Fraction(item["start_us"], 1000)
+                + (frame["pts"] - item["source_start_pts"]) * Fraction(*frame["time_base"]) * 1000
+            )
+            if (
+                frame["frame_id"] != expected_id
+                or frame["stream_index"] != item["stream_index"]
+                or frame["time_base"] != item["time_base"]
+                or frame["time_ms"] != expected_time
+            ):
                 raise ValueError("catalog identity/PTS mapping differs from source")
             if (frame["width"], frame["height"]) != (item["width"], item["height"]):
                 raise ValueError("catalog dimensions differ from source")
@@ -99,7 +109,11 @@ def open_run(out):
     manifest = load(out / "manifest.json")
     if manifest.get("status") != "ready":
         raise ValueError("run is on hold; complete its detector data first")
-    if manifest["policy_version"] != POLICY or fingerprint({k: v for k, v in manifest.items() if k != "fingerprint"}) != manifest["fingerprint"]:
+    if (
+        manifest["policy_version"] != POLICY
+        or fingerprint({k: v for k, v in manifest.items() if k != "fingerprint"})
+        != manifest["fingerprint"]
+    ):
         raise ValueError("run manifest changed or policy differs")
     for name, expected in manifest["artifact_hashes"].items():
         if digest(out / name) != expected:

@@ -27,16 +27,47 @@ def test_actual_image_tool_outputs_call_ids_and_resume(prepared, tmp_path):
         def create(self, **kwargs):
             self.count += 1
             if self.count == 1:
-                call = SimpleNamespace(type="function_call", call_id="call-1", name="get_frames",
-                                       arguments=json.dumps({"frame_ids": [frames[1]["frame_id"], frames[6]["frame_id"]], "roi": [0, 0, 16, 12]}))
-                return SimpleNamespace(id="response-1", model="fake", status="completed", usage=None, output=[call])
-            returned = next(x for x in kwargs["input"] if isinstance(x, dict) and x.get("type") == "function_call_output")
+                call = SimpleNamespace(
+                    type="function_call",
+                    call_id="call-1",
+                    name="get_frames",
+                    arguments=json.dumps(
+                        {
+                            "frame_ids": [frames[1]["frame_id"], frames[6]["frame_id"]],
+                            "roi": [0, 0, 16, 12],
+                        }
+                    ),
+                )
+                return SimpleNamespace(
+                    id="response-1", model="fake", status="completed", usage=None, output=[call]
+                )
+            returned = next(
+                x
+                for x in kwargs["input"]
+                if isinstance(x, dict) and x.get("type") == "function_call_output"
+            )
             assert returned["call_id"] == "call-1"
             assert sum(x["type"] == "input_image" for x in returned["output"]) == 2
             assert any(getattr(x, "call_id", None) == "call-1" for x in kwargs["input"])
-            payload = {"segments": [{"start_frame_id": catalog.boundary(task["editable"][0]), "end_frame_id_exclusive": catalog.boundary(task["editable"][1]),
-                                     "activity": "static", "evidence_frame_ids": [frames[1]["frame_id"], frames[6]["frame_id"]], "reason": "synthetic transcript"}]}
-            return SimpleNamespace(id="response-2", model="fake", status="completed", usage=None, output=[], output_text=json.dumps(payload))
+            payload = {
+                "segments": [
+                    {
+                        "start_frame_id": catalog.boundary(task["editable"][0]),
+                        "end_frame_id_exclusive": catalog.boundary(task["editable"][1]),
+                        "activity": "static",
+                        "evidence_frame_ids": [frames[1]["frame_id"], frames[6]["frame_id"]],
+                        "reason": "synthetic transcript",
+                    }
+                ]
+            }
+            return SimpleNamespace(
+                id="response-2",
+                model="fake",
+                status="completed",
+                usage=None,
+                output=[],
+                output_text=json.dumps(payload),
+            )
 
     responses = Responses()
     client = SimpleNamespace(responses=responses)
@@ -72,11 +103,32 @@ def test_uncertain_result_remains_hold(prepared, tmp_path):
 
     class Uncertain:
         def create(self, **kwargs):
-            payload = {"segments": [{"start_frame_id": catalog.boundary(task["editable"][0]), "end_frame_id_exclusive": catalog.boundary(task["editable"][1]),
-                                     "activity": "uncertain", "evidence_frame_ids": [frames[0]["frame_id"], frames[6]["frame_id"]], "reason": "insufficient synthetic evidence"}]}
-            return SimpleNamespace(id="response-1", model="fake", status="completed", usage=None, output=[], output_text=json.dumps(payload))
+            payload = {
+                "segments": [
+                    {
+                        "start_frame_id": catalog.boundary(task["editable"][0]),
+                        "end_frame_id_exclusive": catalog.boundary(task["editable"][1]),
+                        "activity": "uncertain",
+                        "evidence_frame_ids": [frames[0]["frame_id"], frames[6]["frame_id"]],
+                        "reason": "insufficient synthetic evidence",
+                    }
+                ]
+            }
+            return SimpleNamespace(
+                id="response-1",
+                model="fake",
+                status="completed",
+                usage=None,
+                output=[],
+                output_text=json.dumps(payload),
+            )
 
-    assert review(out, tmp_path / "missing.env", 1, client=SimpleNamespace(responses=Uncertain()))["status"] == "hold"
+    assert (
+        review(out, tmp_path / "missing.env", 1, client=SimpleNamespace(responses=Uncertain()))[
+            "status"
+        ]
+        == "hold"
+    )
     assert merge(out)["status"] == "hold"
 
 

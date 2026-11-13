@@ -1,4 +1,5 @@
 """Exact-PTS original RGB views, with per-request scope and persistent PNG reuse."""
+
 from base64 import b64encode
 from collections import OrderedDict
 from fractions import Fraction
@@ -62,25 +63,50 @@ class EvidenceProvider:
         for index in positions:
             ref = self.catalog.frames[index]
             from PIL import Image
+
             image = Image.open(self._path(ref)).convert("RGB")
             original_size = list(image.size)
             if roi is not None:
                 x, y, width, height = roi
-                if x < 0 or y < 0 or width <= 0 or height <= 0 or x + width > image.width or y + height > image.height:
+                if (
+                    x < 0
+                    or y < 0
+                    or width <= 0
+                    or height <= 0
+                    or x + width > image.width
+                    or y + height > image.height
+                ):
                     raise ValueError("ROI outside original image")
                 image = image.crop((x, y, x + width, y + height))
             stream = BytesIO()
             image.save(stream, format="PNG")
             data = stream.getvalue()
-            view = {"frame_id": ref["frame_id"], "time_ms": ref["time_ms"], "pts": ref["pts"], "time_base": ref["time_base"],
-                    "original_size": original_size, "view_size": list(image.size), "roi": roi,
-                    "image_sha256": sha256(data).hexdigest(), "task_id": self.task["task_id"]}
+            view = {
+                "frame_id": ref["frame_id"],
+                "time_ms": ref["time_ms"],
+                "pts": ref["pts"],
+                "time_base": ref["time_base"],
+                "original_size": original_size,
+                "view_size": list(image.size),
+                "roi": roi,
+                "image_sha256": sha256(data).hexdigest(),
+                "task_id": self.task["task_id"],
+            }
             append(self.out / "evidence.jsonl", view)
             self.views.append(view)
             self.seen.add(ref["frame_id"])
             import json
-            content.extend([{"type": "input_text", "text": json.dumps(view, separators=(",", ":"))},
-                            {"type": "input_image", "image_url": "data:image/png;base64," + b64encode(data).decode(), "detail": "original"}])
+
+            content.extend(
+                [
+                    {"type": "input_text", "text": json.dumps(view, separators=(",", ":"))},
+                    {
+                        "type": "input_image",
+                        "image_url": "data:image/png;base64," + b64encode(data).decode(),
+                        "detail": "original",
+                    },
+                ]
+            )
         return content
 
     def get_sequence(self, start_frame_id, end_frame_id_exclusive, step_frames=1, roi=None):
@@ -90,14 +116,28 @@ class EvidenceProvider:
         if start < self.task["context"][0] or end > self.task["context"][1]:
             raise ValueError("sequence outside read-only task context")
         if end - start > step_frames * self.max_images:
-            raise ValueError("sequence exceeds image budget; request a shorter range or larger step")
-        return self.get_frames([self.catalog.boundary(i) for i in range(start, end, step_frames)], roi)
+            raise ValueError(
+                "sequence exceeds image budget; request a shorter range or larger step"
+            )
+        return self.get_frames(
+            [self.catalog.boundary(i) for i in range(start, end, step_frames)], roi
+        )
 
     def _path(self, ref):
-        return self.cache / (fingerprint({"file": self.files[ref["file_id"]]["sha256"], "stream": ref["stream_index"], "pts": ref["pts"]}) + ".png")
+        return self.cache / (
+            fingerprint(
+                {
+                    "file": self.files[ref["file_id"]]["sha256"],
+                    "stream": ref["stream_index"],
+                    "pts": ref["pts"],
+                }
+            )
+            + ".png"
+        )
 
     def _ensure_originals(self, positions):
         import av
+
         groups = {}
         for index in positions:
             ref = self.catalog.frames[index]
@@ -111,7 +151,10 @@ class EvidenceProvider:
             path = self._path(ref)
             if path.is_file():
                 receipt = load(path.with_suffix(".json"))
-                if receipt["image_sha256"] != digest(path) or receipt["frame_id"] != ref["frame_id"]:
+                if (
+                    receipt["image_sha256"] != digest(path)
+                    or receipt["frame_id"] != ref["frame_id"]
+                ):
                     raise ValueError("cached source image changed")
                 self.cache_hits += 1
             elif (image := self.memory.get(ref["frame_id"])) is not None:
@@ -130,7 +173,10 @@ class EvidenceProvider:
                 for frame in container.decode(stream):
                     frame_id = f"{file_id}:s{stream.index}:pts{frame.pts}"
                     position = self.catalog.positions.get(frame_id)
-                    if position is not None and self.task["context"][0] <= position < self.task["context"][1]:
+                    if (
+                        position is not None
+                        and self.task["context"][0] <= position < self.task["context"][1]
+                    ):
                         self.memory.put(frame_id, frame.to_image())
                     if frame.pts in expected:
                         ref = expected.pop(frame.pts)
@@ -145,9 +191,13 @@ class EvidenceProvider:
                     if not expected:
                         break
             if expected:
-                raise ValueError("requested PTS was not decoded; no approximate replacement is allowed")
+                raise ValueError(
+                    "requested PTS was not decoded; no approximate replacement is allowed"
+                )
 
     def _persist(self, ref, image):
         path = self._path(ref)
         image.save(path, format="PNG")
-        write(path.with_suffix(".json"), {"frame_id": ref["frame_id"], "image_sha256": digest(path)})
+        write(
+            path.with_suffix(".json"), {"frame_id": ref["frame_id"], "image_sha256": digest(path)}
+        )

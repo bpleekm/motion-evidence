@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 dependencies = ["av>=16,<17", "Pillow>=11,<13", "openai>=2,<3", "pydantic>=2.10,<3", "python-dotenv>=1,<2"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<10"]
+dev = ["pytest>=8,<10", "ruff==0.17.4"]
 
 [project.scripts]
 motion-evidence = "motion_evidence.cli:main"
@@ -21,5 +21,9 @@ packages = ["src/motion_evidence"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F"]
+select = ["E4", "E7", "E9", "F", "I"]
